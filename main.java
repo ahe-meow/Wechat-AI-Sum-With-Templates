@@ -662,6 +662,14 @@ void callSummaryApiInternal(final String talker, String historyText, int count, 
         final String maskedKey = maskApiKey(apiKey);
         final String timestamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date());
 
+        // 输出完整请求内容到日志
+        logx("[AI总结] 完整请求参数 时间=" + timestamp);
+        logx("[AI总结] 请求地址=" + apiUrl);
+        logx("[AI总结] 请求模型=" + model);
+        logx("[AI总结] API Key=" + maskedKey);
+        logx("[AI总结] 请求体JSON: " + buildRequestBodyJson(params));
+        logx("[AI总结] 请求头: " + headers.toString());
+
         post(apiUrl, params, headers, 90L, body -> {
             try {
                 if (TextUtils.isEmpty(body)) {
@@ -936,6 +944,9 @@ void testApiAvailability(final String apiUrlInput, final String apiKeyInput, fin
         toast("正在以最小消耗测试 API...\n规范化地址: " + apiUrl);
         new Thread(new Runnable() { public void run() {
             try {
+                // 输出完整请求内容到日志
+                logx("[AI总结] API测试完整请求 地址=" + apiUrl + " model=" + model);
+
                 String body = requestApiTest(apiUrl, apiKey, model);
 
                 // 输出完整 JSON 响应到日志
@@ -983,7 +994,12 @@ String requestApiTest(String apiUrl, String apiKey, String model) throws Excepti
         params.put("enable_reasoning", Boolean.FALSE);
         params.put("stream_reasoning", Boolean.FALSE);
     }
-    return httpPostText(apiUrl, buildHeadersForApi(apiUrl, apiKey), buildRequestBodyJson(params), 30000);
+
+    // 输出请求体到日志
+    String requestBody = buildRequestBodyJson(params);
+    logx("[AI总结] API测试请求体JSON: " + requestBody);
+
+    return httpPostText(apiUrl, buildHeadersForApi(apiUrl, apiKey), requestBody, 30000);
 }
 
 Map buildHeadersForApi(String apiUrl, String apiKey) {
