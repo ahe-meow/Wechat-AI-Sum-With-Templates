@@ -609,7 +609,11 @@ void callSummaryApi(final String talker, String historyText, int count) {
 void callSummaryApiInternal(final String talker, String historyText, int count, String promptText) {
     try {
         logx("[AI总结] 准备调用接口，聊天记录字符数=" + (historyText == null ? 0 : historyText.length()) + " count=" + count);
-        final String systemPrompt = TextUtils.isEmpty(promptText) ? getSummaryPrompt() : promptText;
+
+        // 在系统提示词中明确要求不要思考
+        final String systemPrompt = (TextUtils.isEmpty(promptText) ? getSummaryPrompt() : promptText) +
+            "\n\n重要：直接输出最终总结，不要输出任何思考过程、推理过程、分析步骤或草稿。立即开始输出总结内容。";
+
         String apiUrl = getApiUrl();
         String apiKey = getApiKey();
         String model = getModel();
@@ -623,7 +627,7 @@ void callSummaryApiInternal(final String talker, String historyText, int count, 
             params.put("model", model);
             params.put("system", systemPrompt);
             params.put("messages", buildSingleUserMessages(userContent));
-            params.put("max_tokens", Integer.valueOf(1500));
+            params.put("max_tokens", Integer.valueOf(4000));
             if (!TextUtils.isEmpty(apiKey)) {
                 headers.put("x-api-key", apiKey.trim());
             }
@@ -643,7 +647,13 @@ void callSummaryApiInternal(final String talker, String historyText, int count, 
             messages.put(user);
 
             params.put("messages", jsonArrayToList(messages));
-            params.put("max_tokens", Integer.valueOf(1500));
+            params.put("max_tokens", Integer.valueOf(4000));
+
+            // 尝试多种方式禁用推理模式
+            params.put("reasoning", Boolean.FALSE);
+            params.put("enable_reasoning", Boolean.FALSE);
+            params.put("stream_reasoning", Boolean.FALSE);
+
             if (!TextUtils.isEmpty(apiKey)) {
                 headers.put("Authorization", normalizeAuthHeader(apiKey));
             }
@@ -954,8 +964,25 @@ void testApiAvailability(final String apiUrlInput, final String apiKeyInput, fin
 
 String requestApiTest(String apiUrl, String apiKey, String model) throws Exception {
     Map params = new HashMap();
-    if (isClaudeNativeApi(apiUrl)) { params.put("model", model); params.put("messages", buildSingleUserMessages("ping")); params.put("max_tokens", Integer.valueOf(1)); }
-    else { params.put("model", model); JSONArray messages = new JSONArray(); JSONObject user = new JSONObject(); user.put("role", "user"); user.put("content", "ping"); messages.put(user); params.put("messages", jsonArrayToList(messages)); params.put("max_tokens", Integer.valueOf(1)); }
+    if (isClaudeNativeApi(apiUrl)) {
+        params.put("model", model);
+        params.put("messages", buildSingleUserMessages("ping"));
+        params.put("max_tokens", Integer.valueOf(1));
+    } else {
+        params.put("model", model);
+        JSONArray messages = new JSONArray();
+        JSONObject user = new JSONObject();
+        user.put("role", "user");
+        user.put("content", "ping");
+        messages.put(user);
+        params.put("messages", jsonArrayToList(messages));
+        params.put("max_tokens", Integer.valueOf(1));
+
+        // 禁用推理模式
+        params.put("reasoning", Boolean.FALSE);
+        params.put("enable_reasoning", Boolean.FALSE);
+        params.put("stream_reasoning", Boolean.FALSE);
+    }
     return httpPostText(apiUrl, buildHeadersForApi(apiUrl, apiKey), buildRequestBodyJson(params), 30000);
 }
 
