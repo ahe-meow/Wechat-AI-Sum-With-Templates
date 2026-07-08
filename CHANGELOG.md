@@ -1,5 +1,43 @@
 # 更新日志
 
+## v1.2.6 (2026-07-08)
+
+### 修复问题
+- **正确禁用思考模式**：使用官方文档推荐的 `thinking` 参数
+  ```json
+  {
+    "thinking": {
+      "type": "disabled"
+    }
+  }
+  ```
+
+### 技术说明
+
+**之前的尝试**：
+- 使用了 `reasoning: false`、`enable_reasoning: false` 等参数
+- 这些参数不是官方标准，API 会忽略
+- 导致模型仍然进行思考
+
+**正确的方法**（根据 API 文档）：
+- 在请求体中添加 `thinking` 对象
+- 设置 `type: "disabled"` 来禁用思考
+- 设置 `type: "enabled"` 来启用思考（默认行为）
+
+**生成的请求体示例**：
+```json
+{
+  "model": "mimo-v2.5",
+  "messages": [...],
+  "max_tokens": 4000,
+  "thinking": {
+    "type": "disabled"
+  }
+}
+```
+
+现在模型会直接输出总结内容，不再进行冗长的思考过程。
+
 ## v1.2.5 (2026-07-08)
 
 ### 增强日志

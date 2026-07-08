@@ -649,7 +649,12 @@ void callSummaryApiInternal(final String talker, String historyText, int count, 
             params.put("messages", jsonArrayToList(messages));
             params.put("max_tokens", Integer.valueOf(4000));
 
-            // 尝试多种方式禁用推理模式
+            // 禁用推理模式 - 使用 thinking 参数（正确方式）
+            Map thinkingConfig = new HashMap();
+            thinkingConfig.put("type", "disabled");
+            params.put("thinking", thinkingConfig);
+
+            // 尝试其他可能的参数（兼容性）
             params.put("reasoning", Boolean.FALSE);
             params.put("enable_reasoning", Boolean.FALSE);
             params.put("stream_reasoning", Boolean.FALSE);
@@ -989,7 +994,12 @@ String requestApiTest(String apiUrl, String apiKey, String model) throws Excepti
         params.put("messages", jsonArrayToList(messages));
         params.put("max_tokens", Integer.valueOf(1));
 
-        // 禁用推理模式
+        // 禁用推理模式 - 使用 thinking 参数（正确方式）
+        Map thinkingConfig = new HashMap();
+        thinkingConfig.put("type", "disabled");
+        params.put("thinking", thinkingConfig);
+
+        // 尝试其他可能的参数（兼容性）
         params.put("reasoning", Boolean.FALSE);
         params.put("enable_reasoning", Boolean.FALSE);
         params.put("stream_reasoning", Boolean.FALSE);
