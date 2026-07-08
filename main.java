@@ -659,12 +659,19 @@ void callSummaryApiInternal(final String talker, String historyText, int count, 
                     toast("AI总结失败：接口返回为空");
                     return;
                 }
+
+                // 输出完整 JSON 响应到日志
+                logx("[AI总结] 完整API响应 时间=" + timestamp + " 地址=" + apiUrl + " key=" + maskedKey + " model=" + model);
+                logx("[AI总结] JSON响应: " + body);
+
                 String summary = parseSummaryResponse(body);
                 if (TextUtils.isEmpty(summary)) {
-                    logx("[AI总结] 无法解析返回内容 时间=" + timestamp + " 地址=" + apiUrl + " key=" + maskedKey + " model=" + model + " 响应前200字=" + body.substring(0, Math.min(200, body.length())));
+                    logx("[AI总结] 无法解析返回内容 - 已输出完整JSON到上方日志");
                     toast("AI总结失败：接口没有返回可用内容");
                     return;
                 }
+
+                logx("[AI总结] 成功提取内容，长度=" + summary.length() + "字符");
                 String finalText = "【AI聊天总结】\n" + summary.trim();
                 sendSummaryByConfig(talker, finalText);
             } catch (Throwable e) {
@@ -717,8 +724,13 @@ String parseSummaryResponse(String body) {
             if (first != null) {
                 JSONObject msg = first.optJSONObject("message");
                 if (msg != null) {
+                    // 优先使用 content 字段
                     String content = msg.optString("content", "");
                     if (!TextUtils.isEmpty(content)) return content;
+
+                    // 如果 content 为空，尝试 reasoning_content（某些模型如 mimo-v2.5）
+                    String reasoningContent = msg.optString("reasoning_content", "");
+                    if (!TextUtils.isEmpty(reasoningContent)) return reasoningContent;
                 }
                 String text = first.optString("text", "");
                 if (!TextUtils.isEmpty(text)) return text;
@@ -745,7 +757,7 @@ String parseSummaryResponse(String body) {
         String message = json.optString("message", "");
         if (!TextUtils.isEmpty(message)) return message;
     } catch (Throwable e) {
-        logx("非 JSON 响应: " + e.getMessage());
+        logx("[AI总结] JSON解析异常: " + e.getMessage());
     }
     return "";
 }
@@ -913,7 +925,28 @@ void testApiAvailability(final String apiUrlInput, final String apiKeyInput, fin
         if (TextUtils.isEmpty(model)) { toast("请先填写或选择模型名称"); return; }
         toast("正在以最小消耗测试 API...\n规范化地址: " + apiUrl);
         new Thread(new Runnable() { public void run() {
-            try { String body = requestApiTest(apiUrl, apiKey, model); String content = parseSummaryResponse(body); if (!TextUtils.isEmpty(content)) { toast("API测试成功，模型可正常响应"); return; } try { JSONObject json = new JSONObject(body); if (json.has("error")) { toast("API测试失败：" + trimForToast(json.opt("error"))); return; } } catch (Throwable ignored) {} logx("[AI总结] API测试响应无法解析 地址=" + apiUrl + " model=" + model + " 响应前200字=" + (body == null ? "" : body.substring(0, Math.min(200, body.length())))); toast("API有响应，但未解析到有效内容"); }
+            try {
+                String body = requestApiTest(apiUrl, apiKey, model);
+
+                // 输出完整 JSON 响应到日志
+                logx("[AI总结] API测试完整响应 地址=" + apiUrl + " model=" + model);
+                logx("[AI总结] JSON响应: " + body);
+
+                String content = parseSummaryResponse(body);
+                if (!TextUtils.isEmpty(content)) {
+                    toast("API测试成功，模型可正常响应");
+                    return;
+                }
+                try {
+                    JSONObject json = new JSONObject(body);
+                    if (json.has("error")) {
+                        toast("API测试失败：" + trimForToast(json.opt("error")));
+                        return;
+                    }
+                } catch (Throwable ignored) {}
+                logx("[AI总结] API测试响应无法解析 - 已输出完整JSON到上方日志");
+                toast("API有响应，但未解析到有效内容");
+            }
             catch (Throwable e) { logx("[AI总结] API测试失败: " + e.getMessage()); toast("API测试失败：" + trimForToast(e.getMessage())); }
         }}).start();
     } catch (Throwable e) { logx("[AI总结] 启动API测试失败: " + e.getMessage()); toast("API测试失败：" + trimForToast(e.getMessage())); }
