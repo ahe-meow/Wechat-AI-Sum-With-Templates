@@ -46,6 +46,10 @@ String CFG_SEND_TO_CURRENT = "send_to_current";
 String CFG_SEND_TO_FILEHELPER = "send_to_filehelper";
 String CFG_SEND_TO_CUSTOM = "send_to_custom";
 String CFG_CUSTOM_WXID = "custom_wxid";
+String CFG_API_TYPE = "api_type";
+String API_TYPE_OPENAI = "openai";
+String API_TYPE_CLAUDE = "claude";
+String DEFAULT_API_TYPE = API_TYPE_OPENAI;
 boolean DEFAULT_LOG_ENABLE = false;
 String DEFAULT_API_URL = "https://api.openai.com/v1/chat/completions";
 String DEFAULT_MODEL = "gpt-4o-mini";
@@ -553,11 +557,8 @@ String firstNotEmpty(String a, String b, String c) {
     return "";
 }
 
-boolean isClaudeNativeApi(String apiUrl) {
-    if (TextUtils.isEmpty(apiUrl)) return false;
-    String lower = apiUrl.toLowerCase(Locale.getDefault());
-    return lower.indexOf("api.anthropic.com") >= 0 || lower.endsWith("/v1/messages");
-}
+String getApiType() { return getString(CFG_API_TYPE, DEFAULT_API_TYPE); }
+boolean isClaudeMode() { return API_TYPE_CLAUDE.equals(getApiType()); }
 
 List buildSingleUserMessages(String content) {
     java.util.ArrayList messages = new java.util.ArrayList();
@@ -589,7 +590,7 @@ void callSummaryApiInternal(final String talker, String historyText, int count, 
         Map headers = new HashMap();
         headers.put("Content-Type", "application/json");
 
-        if (isClaudeNativeApi(apiUrl)) {
+        if (isClaudeMode()) {
             params.put("model", model);
             params.put("system", systemPrompt);
             params.put("messages", buildSingleUserMessages(userContent));
@@ -845,9 +846,9 @@ String getCustomWxid() {
 
 // ============ 模型列表与接口测试 ============
 
-void fetchAvailableModels(final String apiUrlInput, final String apiKeyInput, final EditText modelInput) {
+void fetchAvailableModels(final String apiUrlInput, final String apiKeyInput, final EditText modelInput, final boolean isClaude) {
     try {
-        final String apiUrl = normalizeApiUrl(apiUrlInput == null ? "" : apiUrlInput.trim());
+        final String apiUrl = normalizeApiUrl(apiUrlInput == null ? "" : apiUrlInput.trim(), isClaude);
         final String apiKey = apiKeyInput == null ? "" : apiKeyInput.trim();
         if (TextUtils.isEmpty(apiUrl)) { toast("请先填写 API 地址"); return; }
         if (TextUtils.isEmpty(apiKey)) { toast("请先填写 API Key"); return; }
@@ -855,7 +856,7 @@ void fetchAvailableModels(final String apiUrlInput, final String apiKeyInput, fi
         new Thread(new Runnable() { public void run() {
             try {
                 final String modelListUrl = deriveModelListUrl(apiUrl);
-                String body = requestModelList(apiUrl, apiKey);
+                String body = requestModelList(apiUrl, apiKey, isClaude);
                 final ArrayList models = parseModelListResponse(body);
                 if (models == null || models.size() == 0) {
                     logx("[AI总结] 模型列表为空 地址=" + modelListUrl + " 响应前200字=" + (body == null ? "" : body.substring(0, Math.min(200, body.length()))));
@@ -883,7 +884,7 @@ void showModelSelectDialog(final ArrayList models, final EditText modelInput) {
     }});
 }
 
-String requestModelList(String apiUrl, String apiKey) throws Exception { return httpGetText(deriveModelListUrl(apiUrl), buildHeadersForApi(apiUrl, apiKey), 20000); }
+String requestModelList(String apiUrl, String apiKey, boolean isClaude) throws Exception { return httpGetText(deriveModelListUrl(apiUrl), buildHeadersForApi(apiUrl, apiKey, isClaude), 20000); }
 
 String deriveModelListUrl(String apiUrl) {
     if (TextUtils.isEmpty(apiUrl)) return "";
@@ -915,9 +916,9 @@ void appendModelIds(ArrayList out, JSONArray arr) {
     for (int i = 0; i < arr.length(); i++) { String id = ""; Object item = arr.opt(i); if (item instanceof JSONObject) { JSONObject o = (JSONObject) item; id = firstNotEmpty(o.optString("id", ""), o.optString("name", ""), o.optString("model", "")); } else { id = safeString(item); } if (!TextUtils.isEmpty(id) && !out.contains(id)) out.add(id); }
 }
 
-void testApiAvailability(final String apiUrlInput, final String apiKeyInput, final String modelInput) {
+void testApiAvailability(final String apiUrlInput, final String apiKeyInput, final String modelInput, final boolean isClaude) {
     try {
-        final String apiUrl = normalizeApiUrl(apiUrlInput == null ? "" : apiUrlInput.trim()); final String apiKey = apiKeyInput == null ? "" : apiKeyInput.trim(); final String model = modelInput == null ? "" : modelInput.trim();
+        final String apiUrl = normalizeApiUrl(apiUrlInput == null ? "" : apiUrlInput.trim(), isClaude); final String apiKey = apiKeyInput == null ? "" : apiKeyInput.trim(); final String model = modelInput == null ? "" : modelInput.trim();
         if (TextUtils.isEmpty(apiUrl)) { toast("请先填写 API 地址"); return; }
         if (TextUtils.isEmpty(apiKey)) { toast("请先填写 API Key"); return; }
         if (TextUtils.isEmpty(model)) { toast("请先填写或选择模型名称"); return; }
@@ -927,7 +928,7 @@ void testApiAvailability(final String apiUrlInput, final String apiKeyInput, fin
                 // 输出完整请求内容到日志
                 logx("[AI总结] API测试完整请求 地址=" + apiUrl + " model=" + model);
 
-                String body = requestApiTest(apiUrl, apiKey, model);
+                String body = requestApiTest(apiUrl, apiKey, model, isClaude);
 
                 // 输出完整 JSON 响应到日志
                 logx("[AI总结] API测试完整响应 地址=" + apiUrl + " model=" + model);
@@ -953,9 +954,9 @@ void testApiAvailability(final String apiUrlInput, final String apiKeyInput, fin
     } catch (Throwable e) { logx("[AI总结] 启动API测试失败: " + e.getMessage()); toast("API测试失败：" + trimForToast(e.getMessage())); }
 }
 
-String requestApiTest(String apiUrl, String apiKey, String model) throws Exception {
+String requestApiTest(String apiUrl, String apiKey, String model, boolean isClaude) throws Exception {
     Map params = new HashMap();
-    if (isClaudeNativeApi(apiUrl)) {
+    if (isClaude) {
         params.put("model", model);
         params.put("messages", buildSingleUserMessages("ping"));
         params.put("max_tokens", Integer.valueOf(1));
@@ -976,7 +977,7 @@ String requestApiTest(String apiUrl, String apiKey, String model) throws Excepti
     String requestBody = buildRequestBodyJson(params);
     logx("[AI总结] API测试请求体JSON: " + requestBody);
 
-    return httpPostText(apiUrl, buildHeadersForApi(apiUrl, apiKey), requestBody, 30000);
+    return httpPostText(apiUrl, buildHeadersForApi(apiUrl, apiKey, isClaude), requestBody, 30000);
 }
 
 void addOAIThinkingDisabledParams(Map params) {
@@ -989,8 +990,12 @@ void addOAIThinkingDisabledParams(Map params) {
 }
 
 Map buildHeadersForApi(String apiUrl, String apiKey) {
+    return buildHeadersForApi(apiUrl, apiKey, isClaudeMode());
+}
+
+Map buildHeadersForApi(String apiUrl, String apiKey, boolean isClaude) {
     Map headers = new HashMap(); headers.put("Content-Type", "application/json");
-    if (isClaudeNativeApi(apiUrl)) { if (!TextUtils.isEmpty(apiKey)) headers.put("x-api-key", apiKey.trim()); headers.put("anthropic-version", "2023-06-01"); }
+    if (isClaude) { if (!TextUtils.isEmpty(apiKey)) headers.put("x-api-key", apiKey.trim()); headers.put("anthropic-version", "2023-06-01"); }
     else { if (!TextUtils.isEmpty(apiKey)) headers.put("Authorization", normalizeAuthHeader(apiKey)); }
     return headers;
 }
@@ -1128,9 +1133,19 @@ void showConfigDialog() {
         LinearLayout root = new LinearLayout(ctx); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(dp(ctx, 20), dp(ctx, 18), dp(ctx, 20), dp(ctx, 18)); root.setBackgroundColor(Color.rgb(246, 248, 252));
         root.addView(materialTitle(ctx, "AI聊天总结")); TextView subTitle = materialBody(ctx, "配置接口、选择模型、测试可用性，并管理你的总结模板。"); subTitle.setPadding(0, dp(ctx, 4), 0, dp(ctx, 12)); root.addView(subTitle);
         final EditText apiUrlInput = createInput(ctx, "API 地址", getApiUrl(), false, true); final EditText apiKeyInput = createInput(ctx, "API Key", getApiKey(), true, false); final EditText modelInput = createInput(ctx, "模型名称", getModel(), false, false);
-        LinearLayout apiCard = createMaterialCard(ctx); apiCard.addView(materialSectionTitle(ctx, "接口设置")); apiCard.addView(materialBody(ctx, "API Key 会保存在插件 config.prop 中，请自行确认设备环境安全。")); apiCard.addView(label(ctx, "API 地址")); apiCard.addView(apiUrlInput); apiCard.addView(label(ctx, "API Key")); apiCard.addView(apiKeyInput); apiCard.addView(label(ctx, "模型名称")); apiCard.addView(modelInput);
-        Button fetchModelBtn = createFilledButton(ctx, "获取可用模型并选择"); fetchModelBtn.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { fetchAvailableModels(apiUrlInput.getText().toString(), apiKeyInput.getText().toString(), modelInput); } }); apiCard.addView(fetchModelBtn);
-        Button testApiBtn = createTonalButton(ctx, "测试API可用性"); testApiBtn.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { testApiAvailability(apiUrlInput.getText().toString(), apiKeyInput.getText().toString(), modelInput.getText().toString()); } }); apiCard.addView(testApiBtn); TextView apiToolTip = materialTip(ctx, "模型列表会根据 API 地址自动推导 /models 接口；测试API仅发送 ping 且 max_tokens=1，尽量降低消耗。"); apiToolTip.setPadding(0, dp(ctx, 8), 0, 0); apiCard.addView(apiToolTip); root.addView(apiCard);
+        final boolean[] selectedIsClaude = new boolean[]{isClaudeMode()};
+        RadioGroup apiTypeGroup = new RadioGroup(ctx);
+        apiTypeGroup.setOrientation(LinearLayout.HORIZONTAL);
+        RadioButton openaiRadio = new RadioButton(ctx); openaiRadio.setText("OpenAI 兼容"); openaiRadio.setId(2001);
+        RadioButton claudeRadio = new RadioButton(ctx); claudeRadio.setText("Claude 原生"); claudeRadio.setId(2002);
+        apiTypeGroup.addView(openaiRadio); apiTypeGroup.addView(claudeRadio);
+        if (selectedIsClaude[0]) { claudeRadio.setChecked(true); } else { openaiRadio.setChecked(true); }
+        apiTypeGroup.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
+            public void onCheckedChanged(RadioGroup group, int checkedId) { selectedIsClaude[0] = (checkedId == 2002); }
+        });
+        LinearLayout apiCard = createMaterialCard(ctx); apiCard.addView(materialSectionTitle(ctx, "接口设置")); apiCard.addView(materialBody(ctx, "API Key 会保存在插件 config.prop 中，请自行确认设备环境安全。")); apiCard.addView(label(ctx, "API 地址")); apiCard.addView(apiUrlInput); apiCard.addView(label(ctx, "API Key")); apiCard.addView(apiKeyInput); apiCard.addView(label(ctx, "模型名称")); apiCard.addView(modelInput); apiCard.addView(label(ctx, "API 类型")); apiCard.addView(apiTypeGroup);
+        Button fetchModelBtn = createFilledButton(ctx, "获取可用模型并选择"); fetchModelBtn.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { fetchAvailableModels(apiUrlInput.getText().toString(), apiKeyInput.getText().toString(), modelInput, selectedIsClaude[0]); } }); apiCard.addView(fetchModelBtn);
+        Button testApiBtn = createTonalButton(ctx, "测试API可用性"); testApiBtn.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { testApiAvailability(apiUrlInput.getText().toString(), apiKeyInput.getText().toString(), modelInput.getText().toString(), selectedIsClaude[0]); } }); apiCard.addView(testApiBtn); TextView apiToolTip = materialTip(ctx, "模型列表会根据 API 地址自动推导 /models 接口；测试API仅发送 ping 且 max_tokens=1，尽量降低消耗。"); apiToolTip.setPadding(0, dp(ctx, 8), 0, 0); apiCard.addView(apiToolTip); root.addView(apiCard);
         final Switch logSwitch = new Switch(ctx); logSwitch.setText("开启运行日志"); logSwitch.setTextColor(Color.rgb(31, 31, 31)); logSwitch.setTextSize(15); logSwitch.setChecked(mLogEnabled); logSwitch.setPadding(0, dp(ctx, 8), 0, dp(ctx, 4));
         LinearLayout logCard = createMaterialCard(ctx); logCard.addView(materialSectionTitle(ctx, "日志设置")); logCard.addView(logSwitch); logCard.addView(materialTip(ctx, "关闭后不写入日志，可避免查询调试日志过多。排查问题时再开启。")); root.addView(logCard);
 
@@ -1207,7 +1222,7 @@ void showConfigDialog() {
         LinearLayout tplCard = createMaterialCard(ctx); tplCard.addView(materialSectionTitle(ctx, "提示词模板")); tplCard.addView(materialBody(ctx, "发送 /ai 总结 使用默认模板（★）；发送 /ai 总结 模板名 使用指定模板。")); Button newTplBtn = createFilledButton(ctx, "+ 新建模板"); newTplBtn.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { if (holder[0] != null) holder[0].dismiss(); showTemplateEditDialog("", true); } }); tplCard.addView(newTplBtn);
         String defaultName = getDefaultTemplateName(); JSONArray tpls = loadTemplatesArray(); if (tpls.length() == 0) { TextView empty = materialTip(ctx, "暂无模板，点击上方“新建模板”。"); empty.setPadding(0, dp(ctx, 12), 0, dp(ctx, 4)); tplCard.addView(empty); } else { for (int i = 0; i < tpls.length(); i++) { JSONObject o = tpls.optJSONObject(i); if (o == null) continue; String tName = o.optString("name"); String mode = o.optString("mode", "days"); String modeText = "count".equals(mode) ? ("最近" + o.optInt("count", 50) + "条") : ("最近" + o.optInt("days", 1) + "天"); boolean isDef = !TextUtils.isEmpty(defaultName) && tName.equals(defaultName); addTemplateItemView(ctx, tplCard, holder, tName, modeText, isDef); } } root.addView(tplCard);
         ScrollView scroll = new ScrollView(ctx); scroll.setBackgroundColor(Color.rgb(246, 248, 252)); scroll.addView(root);
-        AlertDialog dlg = new AlertDialog.Builder(ctx).setTitle("设置").setView(scroll).setPositiveButton("保存", new DialogInterface.OnClickListener() { public void onClick(DialogInterface dialog, int which) { String apiUrl = apiUrlInput.getText().toString().trim(); String apiKey = apiKeyInput.getText().toString().trim(); String model = modelInput.getText().toString().trim(); putString(CFG_API_URL, normalizeApiUrl(TextUtils.isEmpty(apiUrl) ? DEFAULT_API_URL : apiUrl)); putString(CFG_API_KEY, apiKey); putString(CFG_MODEL, TextUtils.isEmpty(model) ? DEFAULT_MODEL : model); putBoolean(CFG_LOG_ENABLE, logSwitch.isChecked()); mLogEnabled = logSwitch.isChecked(); putBoolean(CFG_SEND_TO_CURRENT, currentChatCheck.isChecked()); putBoolean(CFG_SEND_TO_FILEHELPER, filehelperCheck.isChecked()); putBoolean(CFG_SEND_TO_CUSTOM, customCheck.isChecked()); putString(CFG_CUSTOM_WXID, customWxidInput.getText().toString().trim()); toast("AI聊天总结配置已保存"); } }).setNegativeButton("关闭", null).create(); holder[0] = dlg; dlg.show();
+        AlertDialog dlg = new AlertDialog.Builder(ctx).setTitle("设置").setView(scroll).setPositiveButton("保存", new DialogInterface.OnClickListener() { public void onClick(DialogInterface dialog, int which) { String apiUrl = apiUrlInput.getText().toString().trim(); String apiKey = apiKeyInput.getText().toString().trim(); String model = modelInput.getText().toString().trim(); putString(CFG_API_URL, normalizeApiUrl(TextUtils.isEmpty(apiUrl) ? DEFAULT_API_URL : apiUrl, selectedIsClaude[0])); putString(CFG_API_KEY, apiKey); putString(CFG_MODEL, TextUtils.isEmpty(model) ? DEFAULT_MODEL : model); putString(CFG_API_TYPE, selectedIsClaude[0] ? API_TYPE_CLAUDE : API_TYPE_OPENAI); putBoolean(CFG_LOG_ENABLE, logSwitch.isChecked()); mLogEnabled = logSwitch.isChecked(); putBoolean(CFG_SEND_TO_CURRENT, currentChatCheck.isChecked()); putBoolean(CFG_SEND_TO_FILEHELPER, filehelperCheck.isChecked()); putBoolean(CFG_SEND_TO_CUSTOM, customCheck.isChecked()); putString(CFG_CUSTOM_WXID, customWxidInput.getText().toString().trim()); toast("AI聊天总结配置已保存"); } }).setNegativeButton("关闭", null).create(); holder[0] = dlg; dlg.show();
     }});
 }
 
@@ -1404,9 +1419,17 @@ String getApiUrl() {
 }
 
 String normalizeApiUrl(String apiUrl) {
+    return normalizeApiUrl(apiUrl, isClaudeMode());
+}
+
+String normalizeApiUrl(String apiUrl, boolean isClaude) {
     if (TextUtils.isEmpty(apiUrl)) return DEFAULT_API_URL;
     String url = apiUrl.trim();
     String lower = url.toLowerCase(Locale.getDefault());
+    String chatPrefix = isClaude ? "/v1/messages" : "/v1/chat/completions";
+    String[] knownPaths = isClaude
+        ? new String[]{"/v1/messages", "/chat/completions", "/responses"}
+        : new String[]{"/chat/completions", "/v1/messages", "/responses"};
 
     // 移除查询参数
     int q = url.indexOf("?");
@@ -1422,30 +1445,27 @@ String normalizeApiUrl(String apiUrl) {
     }
 
     // 如果已经包含完整路径，直接返回
-    if (lower.endsWith("/chat/completions") ||
-        lower.endsWith("/v1/messages") ||
-        lower.endsWith("/responses")) {
-        return url;
+    for (String p : knownPaths) {
+        if (lower.endsWith(p)) return url;
     }
 
-    // 如果以 /v1 结尾，补全 /chat/completions
+    // 如果以 /v1 结尾，补全对应路径
     if (lower.endsWith("/v1")) {
-        return url + "/chat/completions";
+        return url + chatPrefix;
     }
 
     // 如果包含 /v1/ 但后面有其他路径（如 /v1/models），提取到 /v1 并补全
     int v1Idx = lower.lastIndexOf("/v1/");
     if (v1Idx >= 0) {
-        // 检查 /v1/ 后面是否是 chat/completions 或 messages
         String afterV1 = lower.substring(v1Idx + 4);
         if (!afterV1.startsWith("chat/completions") && !afterV1.startsWith("messages")) {
-            return url.substring(0, v1Idx + 3) + "/chat/completions";
+            return url.substring(0, v1Idx + 3) + chatPrefix;
         }
         return url;
     }
 
-    // 如果没有 /v1，自动添加 /v1/chat/completions
-    return url + "/v1/chat/completions";
+    // 如果没有 /v1，自动添加对应路径
+    return url + chatPrefix;
 }
 
 String getApiKey() {
