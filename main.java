@@ -14,7 +14,7 @@ import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.Switch;
-import android.widget.CheckBox;
+
 import android.widget.TextView;
 
 import org.json.JSONArray;
@@ -39,7 +39,6 @@ import java.util.Map;
 String CFG_API_URL = "api_url";
 String CFG_API_KEY = "api_key";
 String CFG_MODEL = "model";
-String CFG_SUMMARY_COUNT = "summary_count";
 String CFG_LOG_ENABLE = "log_enable";
 String CFG_TEMPLATES = "templates";
 String CFG_DEFAULT_TEMPLATE = "default_template";
@@ -47,7 +46,6 @@ String CFG_SEND_TO_CURRENT = "send_to_current";
 String CFG_SEND_TO_FILEHELPER = "send_to_filehelper";
 String CFG_SEND_TO_CUSTOM = "send_to_custom";
 String CFG_CUSTOM_WXID = "custom_wxid";
-String CFG_SEND_TARGET = "send_target";
 boolean DEFAULT_LOG_ENABLE = false;
 String DEFAULT_API_URL = "https://api.openai.com/v1/chat/completions";
 String DEFAULT_MODEL = "gpt-4o-mini";
@@ -85,7 +83,7 @@ boolean onClickSendBtn(String text) {
     String cmd = text.trim();
     if (isAiCommand(cmd)) {
         String talker = getTargetTalker();
-        handleCommand(talker, cmd, true);
+        handleCommand(talker, cmd);
         return true;
     }
     return false;
@@ -102,7 +100,7 @@ void onHandleMsg(Object msgInfoBean) {
         content = content.trim();
         if (!isAiCommand(content)) return;
 
-        handleCommand(msgInfoBean.getTalker(), content, false);
+        handleCommand(msgInfoBean.getTalker(), content);
     } catch (Throwable e) {
         logx("AI聊天总结处理消息失败: " + e.getMessage());
     }
@@ -113,7 +111,7 @@ boolean isAiCommand(String text) {
     return text.equals("/ai") || text.startsWith("/ai ");
 }
 
-void handleCommand(String talker, String cmd, boolean intercepted) {
+void handleCommand(String talker, String cmd) {
     try {
         if (TextUtils.isEmpty(talker)) {
             toast("请先进入聊天界面");
@@ -158,23 +156,6 @@ boolean isSummaryCommand(String cmd) {
         return !TextUtils.isEmpty(arg);
     }
     return false;
-}
-
-int parseSummaryCount(String cmd) {
-    int count = getSummaryCount();
-    try {
-        String[] parts = cmd.split("\\s+");
-        for (int i = 0; i < parts.length; i++) {
-            String p = parts[i];
-            if (p == null) continue;
-            p = p.trim();
-            if (p.matches("\\d+")) {
-                count = Integer.parseInt(p);
-                break;
-            }
-        }
-    } catch (Throwable ignored) {}
-    return clampCount(count);
 }
 
 int clampCount(int count) {
@@ -1412,7 +1393,6 @@ void showHelpDialog() {
 void ensureDefaultConfig() {
     if (TextUtils.isEmpty(getString(CFG_API_URL, ""))) putString(CFG_API_URL, DEFAULT_API_URL);
     if (TextUtils.isEmpty(getString(CFG_MODEL, ""))) putString(CFG_MODEL, DEFAULT_MODEL);
-    if (getInt(CFG_SUMMARY_COUNT, 0) <= 0) putInt(CFG_SUMMARY_COUNT, 100);
 }
 
 boolean hasApiConfig() {
@@ -1474,10 +1454,6 @@ String getApiKey() {
 
 String getModel() {
     return getString(CFG_MODEL, DEFAULT_MODEL);
-}
-
-int getSummaryCount() {
-    return clampCount(getInt(CFG_SUMMARY_COUNT, 100));
 }
 
 String getSummaryPrompt() {
