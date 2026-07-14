@@ -72,6 +72,10 @@ void onLoad() {
     logx("AI聊天总结插件已加载");
 }
 
+void onUnload() {
+    logx("AI聊天总结插件已卸载");
+}
+
 void openSettings() {
     showConfigDialog();
 }
@@ -276,6 +280,23 @@ void summarizeByTemplateValues(final String talker, final String prompt, final S
     }
 }
 
+boolean formatMessageLine(Object msg, String talker, StringBuilder sb, SimpleDateFormat sdf) {
+    try {
+        if (!isReadableMsg(msg)) return false;
+        String sender = safeString(callNoArg(msg, "getSendTalker"));
+        String content = buildMessageContent(msg);
+        if (TextUtils.isEmpty(content) || TextUtils.isEmpty(sender)) return false;
+        String speaker = resolveDisplayName(sender, talker);
+        if (TextUtils.isEmpty(speaker)) speaker = sender;
+        long time = normalizeTime(safeLong(callNoArg(msg, "getCreateTime")));
+        String timeText = time > 0 ? sdf.format(new Date(time)) : "未知时间";
+        sb.append("[").append(timeText).append("] ");
+        sb.append(speaker).append(": ");
+        sb.append(content.replace("\n", " ").trim()).append("\n");
+        return true;
+    } catch (Throwable ignored) { return false; }
+}
+
 String buildHistoryText(String talker, int count) {
     try {
         count = clampCount(count);
@@ -299,29 +320,7 @@ String buildHistoryText(String talker, int count) {
         for (int i = 0; i < limit; i++) {
             Object msg = list.get(i);
             if (msg == null) continue;
-            try {
-                if (!isReadableMsg(msg)) continue;
-
-                String sender = safeString(callNoArg(msg, "getSendTalker"));
-                String content = buildMessageContent(msg);
-                if (TextUtils.isEmpty(content)) continue;
-
-                String speaker;
-                if (!TextUtils.isEmpty(sender)) {
-                    speaker = resolveDisplayName(sender, talker);
-                    if (TextUtils.isEmpty(speaker)) speaker = sender;
-                } else {
-                    continue;
-                }
-
-                long time = normalizeTime(safeLong(callNoArg(msg, "getCreateTime")));
-                String timeText = time > 0 ? sdf.format(new Date(time)) : "未知时间";
-
-                sb.append("[").append(timeText).append("] ");
-                sb.append(speaker).append(": ");
-                sb.append(content.replace("\n", " ").trim()).append("\n");
-                added++;
-            } catch (Throwable ignored) {}
+            if (formatMessageLine(msg, talker, sb, sdf)) added++;
         }
 
         if (added == 0) return "";
@@ -358,26 +357,12 @@ String buildHistoryTextByDaysRange(String talker, int days) {
         for (int i = 0; i < list.size(); i++) {
             Object msg = list.get(i);
             if (msg == null) continue;
-            try {
-                if (!isReadableMsg(msg)) continue;
 
-                long time = normalizeTime(safeLong(callNoArg(msg, "getCreateTime")));
-                if (time <= 0 || time > now) continue;
-                if (time < rangeStart) continue;
+            long time = normalizeTime(safeLong(callNoArg(msg, "getCreateTime")));
+            if (time <= 0 || time > now) continue;
+            if (time < rangeStart) continue;
 
-                String sender = safeString(callNoArg(msg, "getSendTalker"));
-                String content = buildMessageContent(msg);
-                if (TextUtils.isEmpty(content) || TextUtils.isEmpty(sender)) continue;
-
-                String speaker = resolveDisplayName(sender, talker);
-                if (TextUtils.isEmpty(speaker)) speaker = sender;
-
-                String timeText = sdf.format(new Date(time));
-                sb.append("[").append(timeText).append("] ");
-                sb.append(speaker).append(": ");
-                sb.append(content.replace("\n", " ").trim()).append("\n");
-                added++;
-            } catch (Throwable ignored) {}
+            if (formatMessageLine(msg, talker, sb, sdf)) added++;
         }
 
         logx("[AI总结] 按天数提取 days=" + days + " rangeStart=" + formatLogTime(rangeStart) + " added=" + added);
@@ -649,15 +634,7 @@ void callSummaryApiInternal(final String talker, String historyText, int count, 
             params.put("messages", jsonArrayToList(messages));
             params.put("max_tokens", Integer.valueOf(4000));
 
-            // 禁用推理模式 - 使用 thinking 参数（正确方式）
-            Map thinkingConfig = new HashMap();
-            thinkingConfig.put("type", "disabled");
-            params.put("thinking", thinkingConfig);
-
-            // 尝试其他可能的参数（兼容性）
-            params.put("reasoning", Boolean.FALSE);
-            params.put("enable_reasoning", Boolean.FALSE);
-            params.put("stream_reasoning", Boolean.FALSE);
+            addOAIThinkingDisabledParams(params);
 
             if (!TextUtils.isEmpty(apiKey)) {
                 headers.put("Authorization", normalizeAuthHeader(apiKey));
@@ -673,7 +650,7 @@ void callSummaryApiInternal(final String talker, String historyText, int count, 
         logx("[AI总结] 请求模型=" + model);
         logx("[AI总结] API Key=" + maskedKey);
         logx("[AI总结] 请求体JSON: " + buildRequestBodyJson(params));
-        logx("[AI总结] 请求头: " + headers.toString());
+        logx("[AI总结] 请求头: " + maskHeaders(headers).toString());
 
         post(apiUrl, params, headers, 90L, body -> {
             try {
@@ -798,6 +775,23 @@ String maskApiKey(String apiKey) {
     String v = apiKey.trim();
     if (v.length() <= 8) return "****";
     return v.substring(0, 4) + "****" + v.substring(v.length() - 4);
+}
+
+Map maskHeaders(Map headers) {
+    if (headers == null) return null;
+    Map out = new HashMap();
+    java.util.Iterator it = headers.keySet().iterator();
+    while (it.hasNext()) {
+        String key = String.valueOf(it.next());
+        Object val = headers.get(key);
+        String lowerKey = key.toLowerCase(Locale.getDefault());
+        if (val != null && ("authorization".equals(lowerKey) || "x-api-key".equals(lowerKey))) {
+            out.put(key, maskApiKey(String.valueOf(val)));
+        } else {
+            out.put(key, val);
+        }
+    }
+    return out;
 }
 
 boolean isLogEnabled() {
@@ -994,15 +988,7 @@ String requestApiTest(String apiUrl, String apiKey, String model) throws Excepti
         params.put("messages", jsonArrayToList(messages));
         params.put("max_tokens", Integer.valueOf(1));
 
-        // 禁用推理模式 - 使用 thinking 参数（正确方式）
-        Map thinkingConfig = new HashMap();
-        thinkingConfig.put("type", "disabled");
-        params.put("thinking", thinkingConfig);
-
-        // 尝试其他可能的参数（兼容性）
-        params.put("reasoning", Boolean.FALSE);
-        params.put("enable_reasoning", Boolean.FALSE);
-        params.put("stream_reasoning", Boolean.FALSE);
+        addOAIThinkingDisabledParams(params);
     }
 
     // 输出请求体到日志
@@ -1010,6 +996,15 @@ String requestApiTest(String apiUrl, String apiKey, String model) throws Excepti
     logx("[AI总结] API测试请求体JSON: " + requestBody);
 
     return httpPostText(apiUrl, buildHeadersForApi(apiUrl, apiKey), requestBody, 30000);
+}
+
+void addOAIThinkingDisabledParams(Map params) {
+    Map thinkingConfig = new HashMap();
+    thinkingConfig.put("type", "disabled");
+    params.put("thinking", thinkingConfig);
+    params.put("reasoning", Boolean.FALSE);
+    params.put("enable_reasoning", Boolean.FALSE);
+    params.put("stream_reasoning", Boolean.FALSE);
 }
 
 Map buildHeadersForApi(String apiUrl, String apiKey) {
@@ -1231,11 +1226,7 @@ void showConfigDialog() {
         LinearLayout tplCard = createMaterialCard(ctx); tplCard.addView(materialSectionTitle(ctx, "提示词模板")); tplCard.addView(materialBody(ctx, "发送 /ai 总结 使用默认模板（★）；发送 /ai 总结 模板名 使用指定模板。")); Button newTplBtn = createFilledButton(ctx, "+ 新建模板"); newTplBtn.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { if (holder[0] != null) holder[0].dismiss(); showTemplateEditDialog("", true); } }); tplCard.addView(newTplBtn);
         String defaultName = getDefaultTemplateName(); JSONArray tpls = loadTemplatesArray(); if (tpls.length() == 0) { TextView empty = materialTip(ctx, "暂无模板，点击上方“新建模板”。"); empty.setPadding(0, dp(ctx, 12), 0, dp(ctx, 4)); tplCard.addView(empty); } else { for (int i = 0; i < tpls.length(); i++) { JSONObject o = tpls.optJSONObject(i); if (o == null) continue; String tName = o.optString("name"); String mode = o.optString("mode", "days"); String modeText = "count".equals(mode) ? ("最近" + o.optInt("count", 50) + "条") : ("最近" + o.optInt("days", 1) + "天"); boolean isDef = !TextUtils.isEmpty(defaultName) && tName.equals(defaultName); addTemplateItemView(ctx, tplCard, holder, tName, modeText, isDef); } } root.addView(tplCard);
         ScrollView scroll = new ScrollView(ctx); scroll.setBackgroundColor(Color.rgb(246, 248, 252)); scroll.addView(root);
-        AlertDialog dlg = new AlertDialog.Builder(ctx).setTitle("设置").setView(scroll).setPositiveButton("保存", new DialogInterface.OnClickListener() { public void onClick(DialogInterface dialog, int which) { String apiUrl = apiUrlInput.getText().toString().trim(); String apiKey = apiKeyInput.getText().toString().trim(); String model = modelInput.getText().toString().trim(); putString(CFG_API_URL, normalizeApiUrl(TextUtils.isEmpty(apiUrl) ? DEFAULT_API_URL : apiUrl)); putString(CFG_API_KEY, apiKey); putString(CFG_MODEL, TextUtils.isEmpty(model) ? DEFAULT_MODEL : model); putBoolean(CFG_LOG_ENABLE, logSwitch.isChecked()); mLogEnabled = logSwitch.isChecked(); toast("AI聊天总结配置已保存"); } }).setNegativeButton("关闭", null).create(); holder[0] = dlg; dlg.show();
-                            putBoolean(CFG_SEND_TO_CURRENT, currentChatCheck.isChecked());
-                            putBoolean(CFG_SEND_TO_FILEHELPER, filehelperCheck.isChecked());
-                            putBoolean(CFG_SEND_TO_CUSTOM, customCheck.isChecked());
-                            putString(CFG_CUSTOM_WXID, customWxidInput.getText().toString().trim());
+        AlertDialog dlg = new AlertDialog.Builder(ctx).setTitle("设置").setView(scroll).setPositiveButton("保存", new DialogInterface.OnClickListener() { public void onClick(DialogInterface dialog, int which) { String apiUrl = apiUrlInput.getText().toString().trim(); String apiKey = apiKeyInput.getText().toString().trim(); String model = modelInput.getText().toString().trim(); putString(CFG_API_URL, normalizeApiUrl(TextUtils.isEmpty(apiUrl) ? DEFAULT_API_URL : apiUrl)); putString(CFG_API_KEY, apiKey); putString(CFG_MODEL, TextUtils.isEmpty(model) ? DEFAULT_MODEL : model); putBoolean(CFG_LOG_ENABLE, logSwitch.isChecked()); mLogEnabled = logSwitch.isChecked(); putBoolean(CFG_SEND_TO_CURRENT, currentChatCheck.isChecked()); putBoolean(CFG_SEND_TO_FILEHELPER, filehelperCheck.isChecked()); putBoolean(CFG_SEND_TO_CUSTOM, customCheck.isChecked()); putString(CFG_CUSTOM_WXID, customWxidInput.getText().toString().trim()); toast("AI聊天总结配置已保存"); } }).setNegativeButton("关闭", null).create(); holder[0] = dlg; dlg.show();
     }});
 }
 
