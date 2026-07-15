@@ -51,12 +51,16 @@ String API_TYPE_OPENAI = "openai";
 String API_TYPE_CLAUDE = "claude";
 String DEFAULT_API_TYPE = API_TYPE_OPENAI;
 String CFG_DISABLE_REASONING = "disable_reasoning";
+String CFG_PROMPT_DISABLE_REASONING = "prompt_disable_reasoning";
 String CFG_MAX_TOKENS = "max_tokens";
+String CFG_ENABLE_MAX_TOKENS = "enable_max_tokens";
 boolean DEFAULT_LOG_ENABLE = false;
 String DEFAULT_API_URL = "https://api.openai.com/v1/chat/completions";
 String DEFAULT_MODEL = "gpt-4o-mini";
 boolean DEFAULT_DISABLE_REASONING = true;
+boolean DEFAULT_PROMPT_DISABLE_REASONING = true;
 int DEFAULT_MAX_TOKENS = 4000;
+boolean DEFAULT_ENABLE_MAX_TOKENS = true;
 String DEFAULT_SUMMARY_PROMPT = "你是一个聊天记录总结助手。请基于用户提供的聊天记录，用简短、客观、清晰的中文总结最近聊天内容。\n\n" +
         "格式要求：\n" +
         "1. 第一行是标题，用【】包裹，例如【6月25日群聊摘要】\n" +
@@ -564,7 +568,9 @@ String firstNotEmpty(String a, String b, String c) {
 String getApiType() { return getString(CFG_API_TYPE, DEFAULT_API_TYPE); }
 boolean isClaudeMode() { return API_TYPE_CLAUDE.equals(getApiType()); }
 boolean getDisableReasoning() { return getBoolean(CFG_DISABLE_REASONING, DEFAULT_DISABLE_REASONING); }
+boolean getPromptDisableReasoning() { return getBoolean(CFG_PROMPT_DISABLE_REASONING, DEFAULT_PROMPT_DISABLE_REASONING); }
 int getMaxTokens() { return safeParseInt(getString(CFG_MAX_TOKENS, String.valueOf(DEFAULT_MAX_TOKENS)), DEFAULT_MAX_TOKENS); }
+boolean getEnableMaxTokens() { return getBoolean(CFG_ENABLE_MAX_TOKENS, DEFAULT_ENABLE_MAX_TOKENS); }
 
 List buildSingleUserMessages(String content) {
     java.util.ArrayList messages = new java.util.ArrayList();
@@ -583,14 +589,15 @@ void callSummaryApiInternal(final String talker, String historyText, int count, 
     try {
         logx("[AI总结] 准备调用接口，聊天记录字符数=" + (historyText == null ? 0 : historyText.length()) + " count=" + count);
 
-        // 在系统提示词中明确要求不要思考
-        final String systemPrompt = (TextUtils.isEmpty(promptText) ? getSummaryPrompt() : promptText) +
-            "\n\n重要：直接输出最终总结，不要输出任何思考过程、推理过程、分析步骤或草稿。立即开始输出总结内容。";
+        final String reasoningPrompt = getPromptDisableReasoning()
+            ? "\n\n重要：直接输出最终总结，不要输出任何思考过程、推理过程、分析步骤或草稿。立即开始输出总结内容。"
+            : "";
+        final String systemPrompt = (TextUtils.isEmpty(promptText) ? getSummaryPrompt() : promptText) + reasoningPrompt;
 
         String apiUrl = getApiUrl();
         String apiKey = getApiKey();
         String model = getModel();
-        String userContent = "请直接输出最终聊天总结，不要输出推理过程、分析过程或草稿。请总结以下最近 " + count + " 条聊天记录：\n\n" + historyText;
+        String userContent = (getPromptDisableReasoning() ? "请直接输出最终聊天总结，不要输出推理过程、分析过程或草稿。" : "") + "请总结以下最近 " + count + " 条聊天记录：\n\n" + historyText;
 
         Map params = new HashMap();
         Map headers = new HashMap();
@@ -620,7 +627,7 @@ void callSummaryApiInternal(final String talker, String historyText, int count, 
             messages.put(user);
 
             params.put("messages", jsonArrayToList(messages));
-            params.put("max_tokens", Integer.valueOf(getMaxTokens()));
+            if (getEnableMaxTokens()) params.put("max_tokens", Integer.valueOf(getMaxTokens()));
 
             if (getDisableReasoning()) { addOAIThinkingDisabledParams(params); }
 
@@ -721,9 +728,6 @@ String parseSummaryResponse(String body) {
                     String content = msg.optString("content", "");
                     if (!TextUtils.isEmpty(content)) return content;
 
-                    // 如果 content 为空，尝试 reasoning_content（某些模型如 mimo-v2.5）
-                    String reasoningContent = msg.optString("reasoning_content", "");
-                    if (!TextUtils.isEmpty(reasoningContent)) return reasoningContent;
                 }
                 String text = first.optString("text", "");
                 if (!TextUtils.isEmpty(text)) return text;
@@ -747,8 +751,6 @@ String parseSummaryResponse(String body) {
         String direct = json.optString("text", "");
         if (!TextUtils.isEmpty(direct)) return direct;
 
-        String message = json.optString("message", "");
-        if (!TextUtils.isEmpty(message)) return message;
     } catch (Throwable e) {
         logx("[AI总结] JSON解析异常: " + e.getMessage());
     }
@@ -1170,7 +1172,7 @@ void showConfigDialog() {
     final AlertDialog[] holder = new AlertDialog[1];
     ctx.runOnUiThread(new Runnable() { public void run() {
         LinearLayout root = new LinearLayout(ctx); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(dp(ctx, 20), dp(ctx, 18), dp(ctx, 20), dp(ctx, 18)); root.setBackgroundColor(Color.rgb(246, 248, 252));
-        root.addView(materialTitle(ctx, "AI聊天总结")); TextView subTitle = materialBody(ctx, "配置接口、选择模型、测试可用性，并管理你的总结模板。"); subTitle.setPadding(0, dp(ctx, 4), 0, dp(ctx, 12)); root.addView(subTitle);
+        root.addView(materialTitle(ctx, "AI多模板聊天总结")); TextView subTitle = materialBody(ctx, "配置接口、选择模型、测试可用性，并管理你的总结模板。"); subTitle.setPadding(0, dp(ctx, 4), 0, dp(ctx, 12)); root.addView(subTitle);
         final EditText apiUrlInput = createInput(ctx, "API 地址", getApiUrl(), false, true); final EditText apiKeyInput = createInput(ctx, "API Key", getApiKey(), true, false); final EditText modelInput = createInput(ctx, "模型名称", getModel(), false, false);
         final boolean[] selectedIsClaude = new boolean[]{isClaudeMode()};
         RadioGroup apiTypeGroup = new RadioGroup(ctx);
@@ -1183,8 +1185,10 @@ void showConfigDialog() {
             public void onCheckedChanged(RadioGroup group, int checkedId) { selectedIsClaude[0] = (checkedId == 2002); }
         });
         final EditText maxTokensInput = createInput(ctx, "最大输出 Token（默认4000）", String.valueOf(getMaxTokens()), false, false); maxTokensInput.setInputType(InputType.TYPE_CLASS_NUMBER);
-        final Switch reasonSwitch = new Switch(ctx); reasonSwitch.setText("强制禁用推理/思考参数"); reasonSwitch.setTextColor(Color.rgb(31, 31, 31)); reasonSwitch.setTextSize(15); reasonSwitch.setChecked(getDisableReasoning());
-        LinearLayout apiCard = createMaterialCard(ctx); apiCard.addView(materialSectionTitle(ctx, "接口设置")); apiCard.addView(materialBody(ctx, "API Key 会保存在插件 config.prop 中，请自行确认设备环境安全。")); apiCard.addView(label(ctx, "API 地址")); apiCard.addView(apiUrlInput); apiCard.addView(label(ctx, "API Key")); apiCard.addView(apiKeyInput); apiCard.addView(label(ctx, "模型名称")); apiCard.addView(modelInput); apiCard.addView(label(ctx, "API 类型")); apiCard.addView(apiTypeGroup); apiCard.addView(label(ctx, "最大输出 Token")); apiCard.addView(maxTokensInput); apiCard.addView(reasonSwitch);
+        final Switch reasonParamSwitch = new Switch(ctx); reasonParamSwitch.setText("发送禁用思考参数"); reasonParamSwitch.setTextColor(Color.rgb(31, 31, 31)); reasonParamSwitch.setTextSize(15); reasonParamSwitch.setChecked(getDisableReasoning());
+        final Switch reasonPromptSwitch = new Switch(ctx); reasonPromptSwitch.setText("在提示词中要求直接输出正文"); reasonPromptSwitch.setTextColor(Color.rgb(31, 31, 31)); reasonPromptSwitch.setTextSize(15); reasonPromptSwitch.setChecked(getPromptDisableReasoning());
+        final Switch maxTokensSwitch = new Switch(ctx); maxTokensSwitch.setText("发送最大输出 Token 参数"); maxTokensSwitch.setTextColor(Color.rgb(31, 31, 31)); maxTokensSwitch.setTextSize(15); maxTokensSwitch.setChecked(getEnableMaxTokens());
+        LinearLayout apiCard = createMaterialCard(ctx); apiCard.addView(materialSectionTitle(ctx, "接口设置")); apiCard.addView(materialBody(ctx, "API Key 会保存在插件 config.prop 中，请自行确认设备环境安全。")); apiCard.addView(label(ctx, "API 地址")); apiCard.addView(apiUrlInput); apiCard.addView(label(ctx, "API Key")); apiCard.addView(apiKeyInput); apiCard.addView(label(ctx, "模型名称")); apiCard.addView(modelInput); apiCard.addView(label(ctx, "API 类型")); apiCard.addView(apiTypeGroup); apiCard.addView(label(ctx, "模型思考控制")); apiCard.addView(reasonParamSwitch); apiCard.addView(reasonPromptSwitch); TextView reasoningTip = materialTip(ctx, "不同模型和中转接口对禁用思考参数的支持不同：发送该参数可能导致 HTTP 400，也可能被接口忽略；可单独关闭参数开关，保留提示词约束。"); reasoningTip.setPadding(0, dp(ctx, 4), 0, 0); apiCard.addView(reasoningTip); apiCard.addView(label(ctx, "最大输出 Token")); apiCard.addView(maxTokensSwitch); apiCard.addView(maxTokensInput); TextView tokenTip = materialTip(ctx, "打开思考开关会让模型输出使用较多token，请酌情调整\n参考额度：单条微信信息最大能发送4000字符\nClaude 原生接口要求发送 max_tokens，关闭开关时仍会使用此值。"); tokenTip.setPadding(0, dp(ctx, 4), 0, 0); apiCard.addView(tokenTip);
         Button fetchModelBtn = createFilledButton(ctx, "获取可用模型并选择"); fetchModelBtn.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { fetchAvailableModels(apiUrlInput.getText().toString(), apiKeyInput.getText().toString(), modelInput, selectedIsClaude[0]); } }); apiCard.addView(fetchModelBtn);
         Button testApiBtn = createTonalButton(ctx, "测试API可用性"); testApiBtn.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { testApiAvailability(apiUrlInput.getText().toString(), apiKeyInput.getText().toString(), modelInput.getText().toString(), selectedIsClaude[0]); } }); apiCard.addView(testApiBtn); TextView apiToolTip = materialTip(ctx, "模型列表会根据 API 地址自动推导 /models 接口；测试API仅发送 ping 且 max_tokens=1，尽量降低消耗。"); apiToolTip.setPadding(0, dp(ctx, 8), 0, 0); apiCard.addView(apiToolTip); root.addView(apiCard);
         final Switch logSwitch = new Switch(ctx); logSwitch.setText("开启运行日志"); logSwitch.setTextColor(Color.rgb(31, 31, 31)); logSwitch.setTextSize(15); logSwitch.setChecked(mLogEnabled); logSwitch.setPadding(0, dp(ctx, 8), 0, dp(ctx, 4));
@@ -1263,7 +1267,7 @@ void showConfigDialog() {
         LinearLayout tplCard = createMaterialCard(ctx); tplCard.addView(materialSectionTitle(ctx, "提示词模板")); tplCard.addView(materialBody(ctx, "发送 /ai 总结 使用默认模板（★）；发送 /ai 总结 模板名 使用指定模板。")); Button newTplBtn = createFilledButton(ctx, "+ 新建模板"); newTplBtn.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { if (holder[0] != null) holder[0].dismiss(); showTemplateEditDialog("", true); } }); tplCard.addView(newTplBtn);
         String defaultName = getDefaultTemplateName(); JSONArray tpls = loadTemplatesArray(); if (tpls.length() == 0) { TextView empty = materialTip(ctx, "暂无模板，点击上方“新建模板”。"); empty.setPadding(0, dp(ctx, 12), 0, dp(ctx, 4)); tplCard.addView(empty); } else { for (int i = 0; i < tpls.length(); i++) { JSONObject o = tpls.optJSONObject(i); if (o == null) continue; String tName = o.optString("name"); String mode = o.optString("mode", "days"); String modeText = "count".equals(mode) ? ("最近" + o.optInt("count", 50) + "条") : ("最近" + o.optInt("days", 1) + "天"); boolean isDef = !TextUtils.isEmpty(defaultName) && tName.equals(defaultName); addTemplateItemView(ctx, tplCard, holder, tName, modeText, isDef); } } root.addView(tplCard);
         ScrollView scroll = new ScrollView(ctx); scroll.setBackgroundColor(Color.rgb(246, 248, 252)); scroll.addView(root);
-        AlertDialog dlg = new AlertDialog.Builder(ctx).setTitle("设置").setView(scroll).setPositiveButton("保存", new DialogInterface.OnClickListener() { public void onClick(DialogInterface dialog, int which) { String apiUrl = apiUrlInput.getText().toString().trim(); String apiKey = apiKeyInput.getText().toString().trim(); String model = modelInput.getText().toString().trim(); putString(CFG_API_URL, normalizeApiUrl(TextUtils.isEmpty(apiUrl) ? DEFAULT_API_URL : apiUrl, selectedIsClaude[0])); putString(CFG_API_KEY, apiKey); putString(CFG_MODEL, TextUtils.isEmpty(model) ? DEFAULT_MODEL : model); putString(CFG_API_TYPE, selectedIsClaude[0] ? API_TYPE_CLAUDE : API_TYPE_OPENAI); putBoolean(CFG_LOG_ENABLE, logSwitch.isChecked()); mLogEnabled = logSwitch.isChecked(); putBoolean(CFG_SEND_TO_CURRENT, currentChatCheck.isChecked()); putBoolean(CFG_SEND_TO_FILEHELPER, filehelperCheck.isChecked()); putBoolean(CFG_SEND_TO_CUSTOM, customCheck.isChecked()); putString(CFG_CUSTOM_WXID, customWxidInput.getText().toString().trim()); putString(CFG_MAX_TOKENS, maxTokensInput.getText().toString().trim()); putBoolean(CFG_DISABLE_REASONING, reasonSwitch.isChecked()); toast("AI聊天总结配置已保存"); } }).setNegativeButton("关闭", null).create(); holder[0] = dlg; dlg.show();
+        AlertDialog dlg = new AlertDialog.Builder(ctx).setTitle("设置").setView(scroll).setPositiveButton("保存", new DialogInterface.OnClickListener() { public void onClick(DialogInterface dialog, int which) { String apiUrl = apiUrlInput.getText().toString().trim(); String apiKey = apiKeyInput.getText().toString().trim(); String model = modelInput.getText().toString().trim(); int maxTokens = safeParseInt(maxTokensInput.getText().toString().trim(), DEFAULT_MAX_TOKENS); if (maxTokens < 1) maxTokens = DEFAULT_MAX_TOKENS; putString(CFG_API_URL, normalizeApiUrl(TextUtils.isEmpty(apiUrl) ? DEFAULT_API_URL : apiUrl, selectedIsClaude[0])); putString(CFG_API_KEY, apiKey); putString(CFG_MODEL, TextUtils.isEmpty(model) ? DEFAULT_MODEL : model); putString(CFG_API_TYPE, selectedIsClaude[0] ? API_TYPE_CLAUDE : API_TYPE_OPENAI); putBoolean(CFG_LOG_ENABLE, logSwitch.isChecked()); mLogEnabled = logSwitch.isChecked(); putBoolean(CFG_SEND_TO_CURRENT, currentChatCheck.isChecked()); putBoolean(CFG_SEND_TO_FILEHELPER, filehelperCheck.isChecked()); putBoolean(CFG_SEND_TO_CUSTOM, customCheck.isChecked()); putString(CFG_CUSTOM_WXID, customWxidInput.getText().toString().trim()); putString(CFG_MAX_TOKENS, String.valueOf(maxTokens)); putBoolean(CFG_ENABLE_MAX_TOKENS, maxTokensSwitch.isChecked()); putBoolean(CFG_DISABLE_REASONING, reasonParamSwitch.isChecked()); putBoolean(CFG_PROMPT_DISABLE_REASONING, reasonPromptSwitch.isChecked()); toast("AI聊天总结配置已保存"); } }).setNegativeButton("关闭", null).create(); holder[0] = dlg; dlg.show();
     }});
 }
 
